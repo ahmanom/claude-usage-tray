@@ -1,18 +1,24 @@
-"""QSystemTrayIcon wiring: periodic polling, tooltip, menu, and click-to-view popup."""
+"""QSystemTrayIcon wiring: periodic polling, menu, and click-to-view popup.
+
+No native hover tooltip is used for usage detail (Windows renders multi-line
+tray tooltips as a cramped single line) - detail lives only in the popup
+(single click / Open) and the tray icon's own color-coded percentage.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from .api_client import UsageApiError, UsageSnapshot, fetch_usage
+from .api_client import UsageApiError, fetch_usage
 from .config import AppConfig
 from .credentials import CredentialsError, load_credentials
 from .detail_popup import UsageDetailPopup
 from .icon_renderer import render_percent_icon
+
+_APP_TOOLTIP = "Claude Usage Monitor"
 
 
 def _format_resets(resets_at: datetime | None) -> str:
@@ -31,13 +37,20 @@ def _format_resets(resets_at: datetime | None) -> str:
     return f"resets {local_time} (in {hours}h {minutes}m)"
 
 
-def _build_tooltip(snapshot: UsageSnapshot) -> str:
-    lines = ["Claude Usage Monitor"]
-    if snapshot.session:
-        lines.append(f"Session: {snapshot.session.percent:.0f}%  ({_format_resets(snapshot.session.resets_at)})")
-    if snapshot.weekly:
-        lines.append(f"Weekly:  {snapshot.weekly.percent:.0f}%  ({_format_resets(snapshot.weekly.resets_at)})")
-    return "\n".join(lines)
+def build_tray_menu(on_open, on_refresh, on_close) -> QMenu:
+    """Builds the tray context menu.
+
+    Actions are created via QMenu.addAction(str) so the menu owns them. Creating
+    QAction objects separately and passing them to addAction() does not transfer
+    ownership in PySide6, so they would be garbage collected right after this
+    function returns and the menu would silently render empty on right-click.
+    """
+    menu = QMenu()
+    menu.addAction("Open").triggered.connect(on_open)
+    menu.addAction("Refresh now").triggered.connect(on_refresh)
+    menu.addSeparator()
+    menu.addAction("Close").triggered.connect(on_close)
+    return menu
 
 
 class ClaudeUsageTrayApp:
@@ -46,25 +59,12 @@ class ClaudeUsageTrayApp:
         self._config = config
         self._tray = QSystemTrayIcon()
         self._tray.setIcon(render_percent_icon(None, None, errored=False))
-        self._tray.setToolTip("Claude Usage Monitor - loading...")
+        self._tray.setToolTip(_APP_TOOLTIP)
         self._tray.activated.connect(self._on_activated)
 
         self._popup = UsageDetailPopup(self._tray)
 
-        self._menu = QMenu()
-        self._status_action = QAction("Loading...")
-        self._status_action.setEnabled(False)
-        self._menu.addAction(self._status_action)
-        self._menu.addSeparator()
-
-        refresh_action = QAction("Refresh now")
-        refresh_action.triggered.connect(self.refresh)
-        self._menu.addAction(refresh_action)
-
-        quit_action = QAction("Quit")
-        quit_action.triggered.connect(self._app.quit)
-        self._menu.addAction(quit_action)
-
+        self._menu = build_tray_menu(self._show_popup, self.refresh, self._app.quit)
         self._tray.setContextMenu(self._menu)
         self._tray.show()
 
@@ -91,8 +91,6 @@ class ClaudeUsageTrayApp:
         percent = snapshot.session.percent if snapshot.session else None
         severity = snapshot.session.severity if snapshot.session else None
         self._tray.setIcon(render_percent_icon(percent, severity))
-        self._tray.setToolTip(_build_tooltip(snapshot))
-        self._status_action.setText(_build_tooltip(snapshot).replace("\n", "  |  "))
 
         session_text = f"{snapshot.session.percent:.0f}%" if snapshot.session else "--%"
         session_meta = _format_resets(snapshot.session.resets_at) if snapshot.session else "no data"
@@ -102,10 +100,11 @@ class ClaudeUsageTrayApp:
 
     def _show_error(self, message: str) -> None:
         self._tray.setIcon(render_percent_icon(None, None, errored=True))
-        self._tray.setToolTip(f"Claude Usage Monitor - error\n{message}")
-        self._status_action.setText(f"Error: {message}")
         self._popup.set_status(message)
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            self._popup.show_near_tray()
+            self._show_popup()
+
+    def _show_popup(self) -> None:
+        self._popup.show_near_tray()
