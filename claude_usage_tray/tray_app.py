@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from .api_client import UsageApiError, fetch_usage
+from .api_client import RateLimitedError, UsageApiError, fetch_usage
 from .config import AppConfig
 from .credentials import CredentialsError, load_credentials
 from .detail_popup import UsageDetailPopup
@@ -72,6 +72,16 @@ class ClaudeUsageTrayApp:
         self._timer.timeout.connect(self.refresh)
         self._timer.start(self._config.poll_interval_seconds * 1000)
 
+        # Last successfully fetched values, kept so a 429 can still show
+        # something useful (clearly marked as stale) instead of blanking out.
+        self._last_percent: float | None = None
+        self._last_severity: str | None = None
+        self._last_session_text = "--%"
+        self._last_session_meta = "no data"
+        self._last_weekly_text = "--%"
+        self._last_weekly_meta = "no data"
+        self._last_updated_at: datetime | None = None
+
     def refresh(self) -> None:
         try:
             credentials = load_credentials(self._config.credentials_path)
@@ -84,6 +94,11 @@ class ClaudeUsageTrayApp:
                 user_agent=self._config.user_agent,
                 timeout_seconds=self._config.request_timeout_seconds,
             )
+        except RateLimitedError as exc:
+            self._show_stale()
+            if self._last_updated_at is None:
+                self._show_error(str(exc))
+            return
         except (CredentialsError, UsageApiError) as exc:
             self._show_error(str(exc))
             return
@@ -98,9 +113,33 @@ class ClaudeUsageTrayApp:
         weekly_meta = _format_resets(snapshot.weekly.resets_at) if snapshot.weekly else "no data"
         self._popup.set_content(session_text, session_meta, weekly_text, weekly_meta)
 
+        self._last_percent = percent
+        self._last_severity = severity
+        self._last_session_text = session_text
+        self._last_session_meta = session_meta
+        self._last_weekly_text = weekly_text
+        self._last_weekly_meta = weekly_meta
+        self._last_updated_at = datetime.now()
+
     def _show_error(self, message: str) -> None:
         self._tray.setIcon(render_percent_icon(None, None, errored=True))
         self._popup.set_status(message)
+
+    def _show_stale(self) -> None:
+        """Keeps the last known values on screen after a 429, marked as stale."""
+        if self._last_updated_at is None:
+            return
+        self._tray.setIcon(render_percent_icon(self._last_percent, self._last_severity, stale=True))
+        as_of = self._last_updated_at.strftime("%H:%M")
+        stale_note = f"Rate limited (HTTP 429) - showing values from {as_of}"
+        self._popup.set_content(
+            self._last_session_text,
+            self._last_session_meta,
+            self._last_weekly_text,
+            self._last_weekly_meta,
+            stale=True,
+            stale_note=stale_note,
+        )
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:

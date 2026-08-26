@@ -36,7 +36,9 @@ def _draw_asterisk(painter: QPainter, center: QPointF, radius: float, color: QCo
     painter.restore()
 
 
-def render_percent_icon(percent: float | None, severity: str | None, errored: bool = False) -> QIcon:
+def render_percent_icon(
+    percent: float | None, severity: str | None, errored: bool = False, stale: bool = False
+) -> QIcon:
     """Draws a small square badge showing the usage percentage, color-coded by severity."""
     pixmap = QPixmap(_ICON_SIZE, _ICON_SIZE)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -77,6 +79,16 @@ def render_percent_icon(percent: float | None, severity: str | None, errored: bo
     painter.setFont(font)
     text_rect = rect.adjusted(0, 3, 0, 0)
     painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, label)
+
+    if stale:
+        # Outer red frame: marks the shown percentage as a stale (previous)
+        # value, distinct from the inner severity ring which colors live data.
+        stale_pen = painter.pen()
+        stale_pen.setColor(_SEVERITY_COLORS["critical"])
+        stale_pen.setWidthF(2.2)
+        painter.setPen(stale_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
 
     painter.end()
     return QIcon(pixmap)

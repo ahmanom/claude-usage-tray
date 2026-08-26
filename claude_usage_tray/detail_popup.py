@@ -17,6 +17,7 @@ QLabel#title { font-weight: 600; font-size: 13px; }
 QLabel#rowLabel { color: #B8B2A5; font-size: 11px; }
 QLabel#rowValue { font-size: 15px; font-weight: 700; }
 QLabel#rowMeta { color: #B8B2A5; font-size: 11px; }
+QLabel#staleBanner { color: #D9534F; font-size: 11px; font-weight: 600; }
 QPushButton#close {
     background: transparent;
     border: none;
@@ -58,6 +59,12 @@ class UsageDetailPopup(QWidget):
         header.addWidget(close_btn)
         layout.addLayout(header)
 
+        self._stale_banner = QLabel("")
+        self._stale_banner.setObjectName("staleBanner")
+        self._stale_banner.setWordWrap(True)
+        self._stale_banner.hide()
+        layout.addWidget(self._stale_banner)
+
         self._session_value = QLabel("--%")
         self._session_value.setObjectName("rowValue")
         self._session_meta = QLabel("")
@@ -89,12 +96,26 @@ class UsageDetailPopup(QWidget):
         return row
 
     def set_status(self, text: str) -> None:
+        self._stale_banner.hide()
         self._session_value.setText("--%")
         self._weekly_value.setText("--%")
         self._session_meta.setText(text)
         self._weekly_meta.setText("")
 
-    def set_content(self, session_text: str, session_meta: str, weekly_text: str, weekly_meta: str) -> None:
+    def set_content(
+        self,
+        session_text: str,
+        session_meta: str,
+        weekly_text: str,
+        weekly_meta: str,
+        stale: bool = False,
+        stale_note: str = "",
+    ) -> None:
+        if stale:
+            self._stale_banner.setText(stale_note)
+            self._stale_banner.show()
+        else:
+            self._stale_banner.hide()
         self._session_value.setText(session_text)
         self._session_meta.setText(session_meta)
         self._weekly_value.setText(weekly_text)

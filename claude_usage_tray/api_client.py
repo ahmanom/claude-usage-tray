@@ -14,6 +14,10 @@ class UsageApiError(Exception):
     """Raised when the usage endpoint cannot be reached or returns an error."""
 
 
+class RateLimitedError(UsageApiError):
+    """Raised when the usage endpoint returns HTTP 429 (rate limited)."""
+
+
 @dataclass(frozen=True)
 class LimitWindow:
     percent: float
@@ -86,6 +90,8 @@ def fetch_usage(
                 f"Authentication rejected (HTTP {exc.code}). "
                 "The access token may be expired; open Claude Code to refresh it."
             ) from exc
+        if exc.code == 429:
+            raise RateLimitedError("Usage API rate limited the request (HTTP 429).") from exc
         raise UsageApiError(f"Usage API returned HTTP {exc.code}.") from exc
     except urllib.error.URLError as exc:
         raise UsageApiError(f"Could not reach usage API: {exc.reason}") from exc
